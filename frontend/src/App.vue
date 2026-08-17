@@ -23,7 +23,7 @@
           :class="{ active: currentTab === 'session' }"
           @click="setTab('session')"
         >
-          Сессия (Зима)
+          Сессия
         </button>
       </div>
     </header>
@@ -40,7 +40,7 @@
         </div>
         
         <div class="session-header-info" v-else>
-          <h3>Полное расписание зимней сессии</h3>
+          <h3>Полное расписание сессии</h3>
           <span class="week-type">Все расписанные дни</span>
         </div>
 
@@ -90,7 +90,8 @@
                     <input
                       type="text"
                       class="info-input"
-                      v-model="row[header]"
+                      v-model="row[getInfoKey(row)]"
+                      @input="saveInformationDebounced(row)"
                       @change="saveInformation(row)"
                       placeholder="Добавить информацию..."
                     />
@@ -167,6 +168,7 @@
                   type="text"
                   class="info-input mobile-input"
                   v-model="row[getInfoKey(row)]"
+                  @input="saveInformationDebounced(row)"
                   @change="saveInformation(row)"
                   placeholder="Добавить информацию..."
                 />
@@ -185,10 +187,15 @@
             <thead>
               <tr class="stats-month-row">
                 <th rowspan="2" class="header-main-label sticky-col">Фамилия / Даты</th>
-                <th :colspan="String(groupedData.length)" class="month-title">
-                  {{ currentMonthName.toUpperCase() }}
+                <th
+                  v-for="mg in statsMonthHeaderGroups"
+                  :key="'mh-' + mg.key"
+                  :colspan="String(mg.count)"
+                  class="month-title"
+                >
+                  {{ mg.label.toUpperCase() }}
                 </th>
-                <th :colspan="currentTab === 'semester' ? '2' : '1'" class="total-hours-label">
+                <th :colspan="currentTab === 'semester' ? '2' : String(1 + sessionMonths.length)" class="total-hours-label">
                   Всего часов
                 </th>
               </tr>
@@ -196,8 +203,11 @@
                 <th v-for="group in groupedData" :key="'date-' + group.dayLabel">
                   {{ getDayNumber(group.dayLabel) }}
                 </th>
-                <th class="sub-total-head">за неделю</th>
+                <th class="sub-total-head">{{ currentTab === 'session' ? 'за сессию' : 'за неделю' }}</th>
                 <th v-if="currentTab === 'semester'" class="sub-total-head">в месяц</th>
+                <th v-else v-for="m in sessionMonths" :key="'mth-' + m.key" class="sub-total-head">
+                  {{ m.label }}
+                </th>
               </tr>
             </thead>
 
@@ -207,10 +217,11 @@
                 <td v-for="group in groupedData" :key="'row-day-' + group.dayLabel" class="day-name-cell">
                   {{ getShortDayName(group.dayLabel) }}
                 </td>
-                <td class="stats-week-range-label">{{ shortWeekRangeDisplay }}</td>
+                <td class="stats-week-range-label">{{ currentTab === 'session' ? '' : shortWeekRangeDisplay }}</td>
                 <td v-if="currentTab === 'semester'">
                   <span style="text-transform: capitalize;">{{ currentMonthName }}</span>
                 </td>
+                <td v-else v-for="m in sessionMonths" :key="'mth-lbl-' + m.key"></td>
               </tr>
 
               <tr v-for="(stats, person) in statisticsData" :key="person">
@@ -223,6 +234,9 @@
                 </td>
                 <td v-if="currentTab === 'semester'" class="stats-month-total">
                   {{ formatHours(stats.monthTotal) }}
+                </td>
+                <td v-else v-for="m in sessionMonths" :key="'mval-' + m.key" class="stats-month-total">
+                  {{ stats.byMonth && stats.byMonth[m.key] ? formatHours(stats.byMonth[m.key]) : '0' }}
                 </td>
               </tr>
             </tbody>
@@ -244,22 +258,61 @@
             </div>
             <div class="card-totals">
               <div class="total-row">
-                <span>За неделю:</span>
+                <span>{{ currentTab === 'session' ? 'За сессию:' : 'За неделю:' }}</span>
                 <strong>{{ formatHours(stats.weekTotal) }} ч.</strong>
               </div>
               <div class="total-row month" v-if="currentTab === 'semester'">
                 <span style="text-transform: capitalize;">В месяц ({{ currentMonthName }}):</span>
                 <strong>{{ formatHours(stats.monthTotal) }} ч.</strong>
               </div>
+              <div
+                class="total-row month"
+                v-else
+                v-for="m in sessionMonths"
+                :key="'mob-mtotal-' + m.key"
+              >
+                <span style="text-transform: capitalize;">{{ m.label }}:</span>
+                <strong>{{ stats.byMonth && stats.byMonth[m.key] ? formatHours(stats.byMonth[m.key]) : '0' }} ч.</strong>
+              </div>
             </div>
           </div>
         </div>
       </section>
     </main>
+
+    <footer class="app-footer">
+      <p class="footer-credit">Дизайн, код и реализация — Токарев Денис Викторович</p>
+      <div class="footer-contacts">
+        <a href="https://vk.ru/denka49" target="_blank" rel="noopener noreferrer">ВКонтакте</a>
+        <span class="footer-divider">·</span>
+        <a href="https://t.me/ViktorovichDesign" target="_blank" rel="noopener noreferrer">Telegram</a>
+        <span class="footer-divider">·</span>
+        <a href="mailto:denis497173291@gmail.com">Email</a>
+      </div>
+      <p class="footer-note">По вопросам сотрудничества и доработок — пишите в любой из каналов выше</p>
+    </footer>
   </div>
 </template>
 
 <script>
+import { initializeApp } from "firebase/app";
+import { getDatabase, ref, set, remove, onValue } from "firebase/database";
+
+// Данные вашего проекта из Firebase-консоли (Project settings → General → Your apps)
+const firebaseConfig = {
+  apiKey: "AIzaSyB8ISLVy_HDp2NbRQKBQ35sStKlQP7GT_M",
+  authDomain: "schedule-6d23f.firebaseapp.com",
+  databaseURL: "https://schedule-6d23f-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "schedule-6d23f",
+  storageBucket: "schedule-6d23f.firebasestorage.app",
+  messagingSenderId: "405275896557",
+  appId: "1:405275896557:web:bedc810b71e88d9f5c3ae4"
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getDatabase(firebaseApp);
+const notesRef = ref(db, "schedule_custom_notes");
+
 export default {
   data() {
     return {
@@ -269,6 +322,8 @@ export default {
       error: null,
       currentDate: new Date(),
       selectedSurname: "",
+      saveTimers: {},
+      notes: {},
     };
   },
 
@@ -316,11 +371,10 @@ export default {
       const data = this.currentTab === "semester" ? this.schedule.semester : this.schedule.session;
       if (!data || !data.length) return [];
 
-      let filtered = [...data];
+      // копии строк (не оригиналы) — иначе ввод текста ломает автосохранение
+      let filtered = data.map((row) => ({ ...row }));
 
-      // =====================================================
-      // ОБРАБОТКА ЧИСЛИТЕЛЬ / ЗНАМЕНАТЕЛЬ
-      // =====================================================
+      // числитель/знаменатель (только семестр)
       if (this.currentTab === "semester") {
         const processed = [];
         const TECHNICAL_COLUMNS = ["часы", "время", "дни нед.", "дни", "даты", "информация", "information"];
@@ -358,9 +412,7 @@ export default {
         filtered = processed;
       }
 
-      // =====================================================
-      // УДАЛЕНИЕ ПУСТЫХ СТРОК ДЛЯ ВСЕХ ВКЛАДОК
-      // =====================================================
+      // убираем пустые строки (без времени/дня или без дежурного)
       filtered = filtered.filter((row) => {
         const hasTime = (row["Часы"] && String(row["Часы"]).trim() !== "") || 
                         (row["время"] && String(row["время"]).trim() !== "") ||
@@ -376,33 +428,36 @@ export default {
         return (hasTime || hasDay) && hasAnySurname;
       });
 
-      // =====================================================
-      // ФИЛЬТР ПО ФАМИЛИИ
-      // =====================================================
+      // фильтр по фамилии — только колонки с именами, чужие фамилии затираем
       if (this.selectedSurname) {
-        filtered = filtered.filter((row) =>
-          Object.values(row).some((val) => {
-            const str = String(val).trim();
-            return str.toLowerCase().includes(this.selectedSurname.toLowerCase());
-          })
-        );
-      }
+        const target = this.selectedSurname.trim().toLowerCase();
+        const isMatch = (val) => val && String(val).trim().toLowerCase().includes(target);
 
-      // =====================================================
-      // ПОДГРУЗКА ЛОКАЛЬНЫХ ЗАМЕТОК
-      // =====================================================
-      const savedNotes = JSON.parse(localStorage.getItem("schedule_custom_notes") || "{}");
+        filtered = filtered
+          .filter((row) => {
+            const locKeys = this.getRowLocations(row);
+            return locKeys.some((key) => isMatch(row[key]));
+          })
+          .map((row) => {
+            const clone = { ...row };
+            const locKeys = this.getRowLocations(clone);
+            locKeys.forEach((key) => {
+              if (!isMatch(clone[key])) clone[key] = "";
+            });
+            return clone;
+          });
+      }
 
       filtered.forEach((row) => {
         const dayLabel = this.formatDayWithDate(row);
         const timeLabel = row["Часы"] || row["время"] || row["ВРЕМЯ"] || "";
-        const uniqueKey = `${this.currentTab}_${dayLabel}_${timeLabel}`.trim().toLowerCase();
+        const uniqueKey = this.sanitizeKey(`${this.currentTab}_${dayLabel}_${timeLabel}`.trim().toLowerCase());
 
         const infoKey = this.getInfoKey(row);
         if (!row[infoKey]) row[infoKey] = "";
 
-        if (savedNotes[uniqueKey] !== undefined) {
-          row[infoKey] = savedNotes[uniqueKey];
+        if (this.notes[uniqueKey] !== undefined) {
+          row[infoKey] = this.notes[uniqueKey];
         }
       });
 
@@ -442,20 +497,69 @@ export default {
       return Array.from(map, ([dayLabel, rows]) => ({ dayLabel, rows }));
     },
 
+    // реальные месяцы, встречающиеся в данных сессии
+    sessionMonths() {
+      if (this.currentTab !== "session") return [];
+      const map = new Map();
+      (this.schedule.session || []).forEach((row) => {
+        const d = this.parseExcelDate(row["даты"]);
+        if (!d) return;
+
+        // пропускаем пустые дни (без единого дежурного)
+        const locKeys = this.getRowLocations(row);
+        const hasData = locKeys.some(
+          (key) => row[key] && String(row[key]).trim() !== "" && String(row[key]).trim() !== "—"
+        );
+        if (!hasData) return;
+
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        if (!map.has(key)) {
+          map.set(key, {
+            key,
+            year: d.getFullYear(),
+            month: d.getMonth(),
+            label: d.toLocaleDateString("ru-RU", { month: "long" }),
+          });
+        }
+      });
+      return [...map.values()].sort((a, b) => a.year - b.year || a.month - b.month);
+    },
+
+    // группировка дней статистики по месяцам (для заголовка таблицы)
+    statsMonthHeaderGroups() {
+      const groups = [];
+      this.groupedData.forEach((g) => {
+        const match = g.dayLabel.match(/(\d{2})\.(\d{2})\.(\d{4})/);
+        let key = "unknown";
+        let label = "";
+        if (match) {
+          key = `${match[3]}-${match[2]}`;
+          label = new Date(Number(match[3]), Number(match[2]) - 1, 1).toLocaleDateString("ru-RU", { month: "long" });
+        }
+        const last = groups[groups.length - 1];
+        if (last && last.key === key) {
+          last.count += 1;
+        } else {
+          groups.push({ key, label, count: 1 });
+        }
+      });
+      return groups;
+    },
+
     availableSurnames() {
+      // только из "именных" колонок (getRowLocations)
       const data = this.currentTab === "semester" ? this.schedule.semester : this.schedule.session;
-      const excludedColumns = ["дни нед.", "дни", "часы", "время", "пары", "информация", "information", "даты"];
       const names = new Set();
       data.forEach((row) => {
-        Object.keys(row).forEach((key) => {
-          if (excludedColumns.includes(key.toLowerCase().trim())) return;
+        const locKeys = this.getRowLocations(row);
+        locKeys.forEach((key) => {
           const value = row[key];
           if (value && value !== "—" && String(value).trim() !== "") {
             names.add(String(value).trim());
           }
         });
       });
-      return [...names].sort();
+      return [...names].sort((a, b) => a.localeCompare(b, "ru"));
     },
 
     statisticsData() {
@@ -474,11 +578,11 @@ export default {
       const addHours = (person, dayLabel, hours, mode = 'week') => {
         if (!person || hours <= 0) return;
 
-        // Поиск ключа без учета регистра, чтобы не было дублей "Иванов" и "иванов"
+        // без учёта регистра, чтобы не было дублей
         let pKey = Object.keys(result).find(k => k.toLowerCase() === person.toLowerCase());
         if (!pKey) {
           pKey = person;
-          result[pKey] = { byDay: {}, weekTotal: 0, monthTotal: 0 };
+          result[pKey] = { byDay: {}, weekTotal: 0, monthTotal: 0, byMonth: {} };
         }
 
         if (dayLabel) {
@@ -490,9 +594,21 @@ export default {
         if (mode === 'month' || mode === 'both') result[pKey].monthTotal += hours;
       };
 
+      // часы по конкретному месяцу (для сессии)
+      const addHoursToMonth = (person, monthKey, hours) => {
+        if (!person || hours <= 0 || !monthKey) return;
+        let pKey = Object.keys(result).find(k => k.toLowerCase() === person.toLowerCase());
+        if (!pKey) {
+          pKey = person;
+          result[pKey] = { byDay: {}, weekTotal: 0, monthTotal: 0, byMonth: {} };
+        }
+        if (!result[pKey].byMonth[monthKey]) result[pKey].byMonth[monthKey] = 0;
+        result[pKey].byMonth[monthKey] += hours;
+      };
+
       const parseInfoHours = (text, callback) => {
         if (!text || typeof text !== 'string') return;
-        const regex = /([А-ЯЁa-z][а-яёa-z]+\s?[А-ЯЁa-z]?\.?(?:\sс\s\d{2}\.\d{2})?)[,\s]+(\d{1,2})[:.]?(\d{0,2})\s?[-–]\s?(\d{1,2})[:.]?(\d{0,2})/gi;
+        const regex = /([А-ЯЁa-z][а-яёa-z]+\s?[А-ЯЁa-z]?\.?)[,\s]+(\d{1,2})[:.]?(\d{0,2})\s?[-–]\s?(\d{1,2})[:.]?(\d{0,2})/gi;
         let match;
         while ((match = regex.exec(text)) !== null) {
           const name = match[1].trim();
@@ -503,9 +619,7 @@ export default {
         }
       };
 
-      // =====================================================
-      // 1. РАСЧЕТ ЗА ТЕКУЩУЮ НЕДЕЛЮ (по отфильтрованным данным на экране)
-      // =====================================================
+      // 1. за текущую неделю
       const processedWeekRows = new Set();
 
       this.filteredData.forEach((row) => {
@@ -516,14 +630,12 @@ export default {
         if (processedWeekRows.has(uniqueKey)) return;
         processedWeekRows.add(uniqueKey);
 
-        // Часы локаций за неделю
         const locKeys = this.getRowLocations(row);
         locKeys.forEach((loc) => {
           const person = normalizeName(row[loc]);
           if (person) addHours(person, dayLabel, pairHours, 'week');
         });
 
-        // Часы из Информации за неделю
         const infoKey = this.getInfoKey(row);
         const infoText = row[infoKey] || '';
         parseInfoHours(infoText, (name, hours) => {
@@ -531,25 +643,21 @@ export default {
         });
       });
 
-      // =====================================================
-      // 2. ГЛОБАЛЬНЫЙ РАСЧЕТ ЗА МЕСЯЦ
-      // =====================================================
+      // 2. за месяц
       if (this.currentTab === 'semester' && this.schedule.semester && this.schedule.semester.length) {
         const rawSemester = this.schedule.semester;
-        const savedNotes = JSON.parse(localStorage.getItem("schedule_custom_notes") || "{}");
         
         const firstDay = new Date(targetYear, targetMonth, 1);
         const lastDay = new Date(targetYear, targetMonth + 1, 0);
         const dayNames = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
 
         for (let date = new Date(firstDay); date <= lastDay; date.setDate(date.getDate() + 1)) {
-          if (date.getDay() === 0) continue; // Пропуск воскресений
+          if (date.getDay() === 0) continue; // без воскресений
 
           const currentWeekType = this.getWeekTypeByDate(date);
           const dayName = dayNames[date.getDay()];
           const validRows = [];
 
-          // Поиск строк для данного дня месяца
           for (let i = 0; i < rawSemester.length; i++) {
             const row = rawSemester[i];
             const rowDay = String(row['Дни нед.'] || row['дни'] || row['ДНИ НЕД.'] || '').toLowerCase().trim();
@@ -576,23 +684,21 @@ export default {
             }
           }
 
-          // Начисляем часы за месяц
           validRows.forEach((row) => {
-            // Часы из сетки
             const locKeys = this.getRowLocations(row);
             locKeys.forEach((loc) => {
               const person = normalizeName(row[loc]);
               if (person) addHours(person, null, pairHours, 'month');
             });
 
-            // Формируем ИДЕНТИЧНЫЙ ключ для поиска в localStorage
+            // ключ как при сохранении заметки
             const timeLabel = row['Часы'] || row['время'] || row['ВРЕМЯ'] || '';
             const capDayName = dayName.charAt(0).toUpperCase() + dayName.slice(1);
             const dateStr = date.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" });
             const exactDayLabel = `${capDayName} ${dateStr}`;
             
-            const uniqueKey = `semester_${exactDayLabel}_${timeLabel}`.trim().toLowerCase();
-            const infoText = savedNotes[uniqueKey] || "";
+            const uniqueKey = this.sanitizeKey(`semester_${exactDayLabel}_${timeLabel}`.trim().toLowerCase());
+            const infoText = this.notes[uniqueKey] || "";
 
             parseInfoHours(infoText, (name, hours) => {
               addHours(name, null, hours, 'month');
@@ -601,42 +707,65 @@ export default {
         }
       } 
       else if (this.currentTab === "session" && this.schedule.session && this.schedule.session.length) {
+        // по каждому реальному месяцу сессии, а не только по текущему
         this.schedule.session.forEach(row => {
           if (row && row["даты"]) {
             const dateObj = this.parseExcelDate(row["даты"]);
-            if (dateObj && dateObj.getMonth() === targetMonth && dateObj.getFullYear() === targetYear) {
+            if (dateObj) {
+              const monthKey = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, "0")}`;
+
               const locKeys = this.getRowLocations(row);
               locKeys.forEach((loc) => {
                 const person = normalizeName(row[loc]);
-                if (person) addHours(person, null, pairHours, 'month');
+                if (person) addHoursToMonth(person, monthKey, pairHours);
               });
 
               const timeLabel = row['Часы'] || row['время'] || row['ВРЕМЯ'] || '';
               const exactDayLabel = this.formatDayWithDate(row);
-              const uniqueKey = `session_${exactDayLabel}_${timeLabel}`.trim().toLowerCase();
-              const savedNotes = JSON.parse(localStorage.getItem("schedule_custom_notes") || "{}");
-              const infoText = savedNotes[uniqueKey] || "";
+              const uniqueKey = this.sanitizeKey(`session_${exactDayLabel}_${timeLabel}`.trim().toLowerCase());
+              const infoText = this.notes[uniqueKey] || "";
 
               parseInfoHours(infoText, (name, hours) => {
-                addHours(name, null, hours, 'month');
+                addHoursToMonth(name, monthKey, hours);
               });
             }
           }
         });
       }
 
-      // =====================================================
-      // ОКРУГЛЕНИЕ
-      // =====================================================
+      // округление
       Object.values(result).forEach((stats) => {
         stats.weekTotal = Number(stats.weekTotal.toFixed(1));
         stats.monthTotal = Number(stats.monthTotal.toFixed(1));
         Object.keys(stats.byDay).forEach((day) => {
           stats.byDay[day] = Number(stats.byDay[day].toFixed(1));
         });
+        Object.keys(stats.byMonth || {}).forEach((m) => {
+          stats.byMonth[m] = Number(stats.byMonth[m].toFixed(1));
+        });
       });
 
-      return result;
+      // сортировка по алфавиту
+      const sortedResult = {};
+      Object.keys(result)
+        .sort((a, b) => a.localeCompare(b, "ru"))
+        .forEach((key) => {
+          sortedResult[key] = result[key];
+        });
+
+      // если выбрана фамилия — оставляем в статистике только её
+      if (this.selectedSurname) {
+        const target = this.selectedSurname.trim().toLowerCase();
+        const onlySelected = {};
+        Object.keys(sortedResult).forEach((key) => {
+          if (key.toLowerCase().includes(target)) {
+            onlySelected[key] = sortedResult[key];
+          }
+        });
+        return onlySelected;
+      }
+
+      return sortedResult;
     },
   },
 
@@ -644,7 +773,7 @@ export default {
       async loadSchedule() {
         try {
           this.loading = true;
-          const response = await fetch("/data.json");
+          const response = await fetch("./data.json");
           if (!response.ok) throw new Error("Ошибка загрузки");
           const data = await response.json();
           this.schedule = this.preprocessData(data);
@@ -701,6 +830,18 @@ export default {
     },
 
     preprocessData(data) {
+      // сотрудники, полностью скрытые из графика и статистики
+      const EXCLUDED_NAMES = ["белая"];
+
+      const stripExcludedNames = (row) => {
+        this.getRowLocations(row).forEach((key) => {
+          const val = row[key];
+          if (val && EXCLUDED_NAMES.includes(String(val).trim().toLowerCase())) {
+            row[key] = "";
+          }
+        });
+      };
+
       let lastDate = "";
       let lastDay = "";
       data.session = (data.session || []).map((row) => {
@@ -712,6 +853,7 @@ export default {
           row["Вознесенский"] = row["Воснесенский"];
           delete row["Воснесенский"];
         }
+        stripExcludedNames(row);
         return row;
       });
 
@@ -722,6 +864,7 @@ export default {
         else row["Дни нед."] = lastDaySem;
         if (row["Часы"] !== undefined && row["Часы"] !== "") lastTimeSem = row["Часы"];
         else row["Часы"] = lastTimeSem;
+        stripExcludedNames(row);
         return row;
       });
       return data;
@@ -799,22 +942,37 @@ export default {
       return dayLabel.includes(todayStr);
     },
 
-    saveInformation(row) {
+    // автосохранение с задержкой (без ухода из поля)
+    saveInformationDebounced(row) {
+      const key = this.getRowSaveKey(row);
+      clearTimeout(this.saveTimers[key]);
+      this.saveTimers[key] = setTimeout(() => {
+        this.saveInformation(row);
+      }, 500);
+    },
+
+    getRowSaveKey(row) {
       const dayLabel = this.formatDayWithDate(row);
       const timeLabel = row['Часы'] || row['время'] || row['ВРЕМЯ'] || '';
-      const uniqueKey = `${this.currentTab}_${dayLabel}_${timeLabel}`.trim().toLowerCase();
+      return `${this.currentTab}_${dayLabel}_${timeLabel}`.trim().toLowerCase();
+    },
 
-      const savedNotes = JSON.parse(localStorage.getItem('schedule_custom_notes') || '{}');
+    // Firebase не разрешает точки, #, $, [, ], / в ключах — заменяем на дефис
+    sanitizeKey(key) {
+      return String(key).replace(/[.#$[\]/]/g, "-");
+    },
+
+    saveInformation(row) {
+      const uniqueKey = this.sanitizeKey(this.getRowSaveKey(row));
       const infoKey = this.getInfoKey(row);
       const value = row[infoKey] || '';
 
-      if (value.trim() === '') {
-        delete savedNotes[uniqueKey];
-      } else {
-        savedNotes[uniqueKey] = value;
-      }
+      const noteRef = ref(db, `schedule_custom_notes/${uniqueKey}`);
+      const request = value.trim() === '' ? remove(noteRef) : set(noteRef, value);
 
-      localStorage.setItem('schedule_custom_notes', JSON.stringify(savedNotes));
+      request.catch((err) => {
+        console.error('Не удалось сохранить заметку:', err);
+      });
     },
 
     formatHours(hours) {
@@ -840,14 +998,17 @@ export default {
   
   mounted() {
     this.loadSchedule();
+
+    // подписка на заметки в реальном времени — обновляется у всех устройств сразу
+    onValue(notesRef, (snapshot) => {
+      this.notes = snapshot.val() || {};
+    });
   }
 };
 </script>
 
 <style>
-/* =========================================================
-   RESET + BASE
-========================================================= */
+/* RESET + BASE */
 *, *::before, *::after { box-sizing: border-box; }
 
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Manrope:wght@700;800&display=swap");
@@ -879,20 +1040,16 @@ body {
   padding: clamp(0.5rem, 1.5vw, 1.5rem); overflow-x: hidden;
 }
 
-/* =========================================================
-   HEADER & CONTROLS
-========================================================= */
+/* HEADER & CONTROLS */
 .header { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.25rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border-dark); }
 .header-left { display: flex; align-items: center; gap: 0.75rem; }
 .header-icon { width: clamp(2.5rem, 4vw, 3rem); height: clamp(2.5rem, 4vw, 3rem); flex-shrink: 0; }
 
 .header-titles h1 {
   margin: 0;
-  /* Возвращаем Inter — он строже, аккуратнее и отлично читается в меньшем размере */
   font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
-  /* Уменьшили размер: теперь диапазон от 1.1rem (на смартфонах) до 1.45rem (на ПК) */
   font-size: clamp(1.1rem, 2.8vw, 1.45rem); 
-  font-weight: 700; /* Снизили плотность с 800 до 700, чтобы заголовок смотрелся легче */
+  font-weight: 700;
   letter-spacing: -0.01em; 
   color: var(--text);
 }
@@ -901,7 +1058,7 @@ body {
   margin-top: 0.25rem; 
   color: var(--text-soft); 
   font-size: clamp(0.8rem, 2vw, 0.875rem); 
-  text-align: left; /* Четкое выравнивание подзаголовка по левому краю */
+  text-align: left;
 }
 
 .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; width: 100%; }
@@ -920,7 +1077,6 @@ body {
 .week-info h3 { margin: 0; font-size: clamp(0.95rem, 2vw, 1.1rem); font-weight: 700; text-align: center; }
 .week-type { display: block; text-align: center; margin-top: 0.15rem; color: var(--text-soft); font-size: 0.8rem; }
 
-/* Обновленные кнопки переключения недель */
 .nav-btn { 
   width: 40px; 
   height: 40px; 
@@ -936,7 +1092,6 @@ body {
   transition: all 0.2s ease-in-out; 
 }
 
-/* Эффекты при взаимодействии с кнопками */
 .nav-btn:hover {
   background: var(--border); 
   color: var(--primary); 
@@ -960,9 +1115,7 @@ body {
 .search-select option {
   color: #000000;
 }
-/* =========================================================
-   ТАБЛИЦЫ И СТИЛИ КОМПОНЕНТОВ
-========================================================= */
+/* ТАБЛИЦЫ И СТИЛИ КОМПОНЕНТОВ */
 .table-wrapper { width: 100%; overflow-x: auto; border-radius: var(--radius); background: white; box-shadow: var(--shadow); }
 table { width: 100%; border-collapse: collapse; }
 thead th { position: sticky; top: 0; z-index: 5; background: var(--surface-soft); color: #475569; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; padding: 0.75rem; }
@@ -1065,5 +1218,51 @@ td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); font-size:
   .card-totals { border-top: 1px solid var(--border); padding-top: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
   .total-row { display: flex; justify-content: space-between; }
   .total-row.month { color: #166534; }
+}
+
+/* ПОДВАЛ */
+.app-footer {
+  margin-top: 2rem;
+  padding: 1.25rem 1rem 0.5rem;
+  border-top: 1px solid var(--border-dark);
+  text-align: center;
+}
+
+.footer-credit {
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.footer-contacts {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.footer-contacts a {
+  color: var(--primary);
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.footer-contacts a:hover {
+  text-decoration: underline;
+}
+
+.footer-divider {
+  color: var(--border-dark);
+  font-size: 0.85rem;
+}
+
+.footer-note {
+  margin: 0 0 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text-soft);
 }
 </style>
