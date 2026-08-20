@@ -6,8 +6,7 @@
           <path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7v-5z" fill="var(--primary)"/>
         </svg>
         <div class="header-titles">
-          <h1>Система «График дежурств»</h1>
-          <p class="subtitle">Управление расписанием дежурств</p>
+          <h1>График дежурств</h1>
         </div>
       </div>
 
@@ -25,10 +24,83 @@
         >
           Сессия
         </button>
+
+        <button class="weeks-admin-toggle" @click="showWeeksAdmin = !showWeeksAdmin" title="Обновить счёт недель">
+          ⚙ Счёт недель
+        </button>
+
+        <button class="weeks-admin-toggle" @click="showScheduleAdmin = !showScheduleAdmin" title="Обновить график дежурств">
+          ⚙ График дежурств
+        </button>
       </div>
     </header>
 
     <main>
+      <section v-if="showWeeksAdmin" class="weeks-admin-card">
+        <h3>Обновление счёта недель</h3>
+        <p class="weeks-admin-hint">
+          Загрузите PDF со счётом недель (тот же формат, что публикует деканат — с пояснением внизу вида
+          «с ДД.ММ по ДД.ММ - ... занятия по числителю/знаменателю» и заголовком с учебным годом). Сайт
+          возьмёт эту точку отсчёта и посчитает чередование недель дальше. Результат появится для
+          проверки — ничего не применится, пока вы не нажмёте «Сохранить».
+        </p>
+
+        <input type="file" accept="application/pdf" @change="onWeeksFileSelected" :disabled="weeksParsing" />
+
+        <div v-if="weeksParsing" class="weeks-admin-status">⏳ Распознаю таблицу…</div>
+        <div v-if="weeksError" class="weeks-admin-error">❌ {{ weeksError }}</div>
+        <div v-if="weeksSaveSuccess" class="weeks-admin-success">✅ Сохранено. Сайт использует новые даты.</div>
+
+        <div v-if="weeksPreview && weeksPreview.length" class="weeks-admin-preview">
+          <table>
+            <thead>
+              <tr>
+                <th>№</th>
+                <th>Начало</th>
+                <th>Конец</th>
+                <th>Тип</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="w in weeksPreview" :key="w.week" :class="{ 'weeks-admin-row-warn': !w.type }">
+                <td>{{ w.week }}</td>
+                <td>{{ w.start }}</td>
+                <td>{{ w.end }}</td>
+                <td>{{ w.type || 'не определён' }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="weeks-admin-hint">
+            Сверьте с оригиналом файла. Если что-то не сходится — не сохраняйте, а сообщите разработчику.
+          </p>
+          <div class="weeks-admin-actions">
+            <button class="weeks-admin-save" @click="saveWeeksPreview" :disabled="weeksSaving">
+              {{ weeksSaving ? 'Сохраняю…' : 'Сохранить' }}
+            </button>
+            <button class="weeks-admin-cancel" @click="weeksPreview = null">Отмена</button>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="showScheduleAdmin" class="weeks-admin-card">
+        <h3>Обновление графика дежурств</h3>
+        <p class="weeks-admin-hint">
+          Загрузите новый файл .xlsx (тот же формат — листы «семестр» и «сессия…»). Сайт сначала
+          проверит, что в файле есть нужные листы и в них есть строки с расписанием, и только потом
+          заменит рабочий файл. Если что-то не сойдётся — ничего не применится, покажу ошибку.
+        </p>
+
+        <input type="file" accept=".xlsx" @change="onScheduleFileSelected" :disabled="scheduleUploading" />
+
+        <div v-if="scheduleUploading" class="weeks-admin-status">⏳ Проверяю и применяю файл…</div>
+        <div v-if="scheduleUploadError" class="weeks-admin-error">❌ {{ scheduleUploadError }}</div>
+        <div v-if="scheduleUploadSuccess" class="weeks-admin-success">
+          ✅ Готово. Семестр: {{ scheduleUploadSuccess.semesterRows }} строк с расписанием, сессия
+          («{{ scheduleUploadSuccess.sessionSheetName }}»): {{ scheduleUploadSuccess.sessionRows }} строк.
+          Сайт уже показывает новые данные.
+        </div>
+      </section>
+
       <section class="controls-card">
         <div class="week-navigation" v-if="currentTab === 'semester'">
           <button class="nav-btn" @click="prevWeek">←</button>
@@ -40,8 +112,8 @@
         </div>
         
         <div class="session-header-info" v-else>
-          <h3>Полное расписание сессии</h3>
-          <span class="week-type">Все расписанные дни</span>
+          <h3>Расписание сессии</h3>
+          <span class="week-type">{{ sessionRangeDisplay }}</span>
         </div>
 
         <div class="search-wrapper">
@@ -324,6 +396,17 @@ export default {
       selectedSurname: "",
       saveTimers: {},
       notes: {},
+      weeksTable: [],
+      showWeeksAdmin: false,
+      weeksParsing: false,
+      weeksSaving: false,
+      weeksError: null,
+      weeksPreview: null,
+      weeksSaveSuccess: false,
+      showScheduleAdmin: false,
+      scheduleUploading: false,
+      scheduleUploadError: null,
+      scheduleUploadSuccess: null,
     };
   },
 
@@ -495,6 +578,34 @@ export default {
         map.get(label).push(row);
       });
       return Array.from(map, ([dayLabel, rows]) => ({ dayLabel, rows }));
+    },
+
+    // реальный диапазон дат сессии (первый и последний расписанный день)
+    sessionRangeDisplay() {
+      const dates = [];
+      (this.schedule.session || []).forEach((row) => {
+        const d = this.parseExcelDate(row["даты"]);
+        if (!d) return;
+
+        // учитываем только дни, где есть хотя бы один дежурный
+        const locKeys = this.getRowLocations(row);
+        const hasData = locKeys.some(
+          (key) => row[key] && String(row[key]).trim() !== "" && String(row[key]).trim() !== "—"
+        );
+        if (!hasData) return;
+
+        dates.push(d);
+      });
+
+      if (!dates.length) return "";
+
+      const format = (d) =>
+        d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" });
+
+      const start = new Date(Math.min(...dates));
+      const end = new Date(Math.max(...dates));
+
+      return `${format(start)} — ${format(end)}`;
     },
 
     // реальные месяцы, встречающиеся в данных сессии
@@ -773,7 +884,7 @@ export default {
       async loadSchedule() {
         try {
           this.loading = true;
-          const response = await fetch("./data.json");
+          const response = await fetch("/api/schedule");
           if (!response.ok) throw new Error("Ошибка загрузки");
           const data = await response.json();
           this.schedule = this.preprocessData(data);
@@ -785,18 +896,121 @@ export default {
         }
       },
 
-    getWeekTypeByDate(date) {
-      const semesterStart = new Date(2025, 8, 1);
-      semesterStart.setHours(0, 0, 0, 0);
+      // грузим файл "Счёт недель"; если его ещё нет на сервере — не страшно,
+      // просто продолжаем работать по запасному расчёту в getWeekTypeByDate
+      async loadWeeks() {
+        try {
+          const response = await fetch("/api/weeks");
+          if (!response.ok) return;
+          const data = await response.json();
+          this.weeksTable = (data || [])
+            .map((item) => ({
+              start: this.parseExcelDate(item.start),
+              end: this.parseExcelDate(item.end),
+              type: item.type,
+            }))
+            .filter((w) => w.start && w.end && w.type);
+        } catch (err) {
+          // сервер недоступен или файла нет — не критично
+        }
+      },
 
+      async onWeeksFileSelected(event) {
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+
+        this.weeksError = null;
+        this.weeksSaveSuccess = false;
+        this.weeksPreview = null;
+        this.weeksParsing = true;
+
+        try {
+          const formData = new FormData();
+          formData.append("file", file);
+          const response = await fetch("/api/weeks/parse", { method: "POST", body: formData });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || "Не удалось распознать файл");
+          this.weeksPreview = result.weeks;
+        } catch (err) {
+          this.weeksError = err.message;
+        } finally {
+          this.weeksParsing = false;
+          event.target.value = "";
+        }
+      },
+
+      async saveWeeksPreview() {
+        if (!this.weeksPreview || !this.weeksPreview.length) return;
+        this.weeksSaving = true;
+        this.weeksError = null;
+
+        try {
+          const response = await fetch("/api/weeks/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(this.weeksPreview),
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || "Не удалось сохранить");
+          this.weeksSaveSuccess = true;
+          this.weeksPreview = null;
+          await this.loadWeeks();
+        } catch (err) {
+          this.weeksError = err.message;
+        } finally {
+          this.weeksSaving = false;
+        }
+      },
+
+      async onScheduleFileSelected(event) {
+        const file = event.target.files && event.target.files[0];
+        if (!file) return;
+
+        if (!window.confirm("Заменить действующий график дежурств этим файлом? Отменить будет можно, только заново загрузив старый файл.")) {
+          event.target.value = "";
+          return;
+        }
+
+        this.scheduleUploadError = null;
+        this.scheduleUploadSuccess = null;
+        this.scheduleUploading = true;
+
+        try {
+          const formData = new FormData();
+          formData.append("file", file);
+          const response = await fetch("/api/schedule/upload", { method: "POST", body: formData });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || "Не удалось загрузить файл");
+          this.scheduleUploadSuccess = result;
+          await this.loadSchedule();
+        } catch (err) {
+          this.scheduleUploadError = err.message;
+        } finally {
+          this.scheduleUploading = false;
+          event.target.value = "";
+        }
+      },
+
+    getWeekTypeByDate(date) {
       const current = new Date(date);
       current.setHours(0, 0, 0, 0);
 
+      // сначала ищем в загруженном файле "Счёт недель"
+      if (this.weeksTable && this.weeksTable.length) {
+        const found = this.weeksTable.find((w) => current >= w.start && current <= w.end);
+        if (found) return found.type;
+      }
+
+      // запасной расчёт — если для этой даты в файле недели не нашлось
       const day = current.getDay();
       const diff = current.getDate() - day + (day === 0 ? -6 : 1);
-      current.setDate(diff);
+      const monday = new Date(current);
+      monday.setDate(diff);
 
-      const diffMs = current.getTime() - semesterStart.getTime();
+      const semesterStart = new Date(2025, 8, 1);
+      semesterStart.setHours(0, 0, 0, 0);
+
+      const diffMs = monday.getTime() - semesterStart.getTime();
       const diffWeeks = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000));
 
       return diffWeeks % 2 === 0 ? 'Числитель' : 'Знаменатель';
@@ -998,6 +1212,7 @@ export default {
   
   mounted() {
     this.loadSchedule();
+    this.loadWeeks();
 
     // подписка на заметки в реальном времени — обновляется у всех устройств сразу
     onValue(notesRef, (snapshot) => {
@@ -1009,10 +1224,9 @@ export default {
 
 <style>
 /* RESET + BASE */
-*, *::before, *::after { box-sizing: border-box; }
 
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Manrope:wght@700;800&display=swap");
-
+*, *::before, *::after { box-sizing: border-box; }
 :root {
   --bg: #f1f5f9;
   --surface: #ffffff;
@@ -1052,13 +1266,6 @@ body {
   font-weight: 700;
   letter-spacing: -0.01em; 
   color: var(--text);
-}
-
-.subtitle { 
-  margin-top: 0.25rem; 
-  color: var(--text-soft); 
-  font-size: clamp(0.8rem, 2vw, 0.875rem); 
-  text-align: left;
 }
 
 .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; width: 100%; }
@@ -1265,4 +1472,35 @@ td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); font-size:
   font-size: 0.75rem;
   color: var(--text-soft);
 }
+
+/* СЧЁТ НЕДЕЛЬ */
+.weeks-admin-toggle {
+  grid-column: 1 / -1;
+  background: transparent;
+  border: 1px dashed var(--border-dark);
+  color: var(--text-soft);
+  font-weight: 500;
+}
+.weeks-admin-toggle:hover { color: var(--primary); border-color: var(--primary); }
+
+.weeks-admin-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-bottom: 1.25rem;
+  box-shadow: var(--shadow);
+  border: 1px dashed var(--border-dark);
+}
+.weeks-admin-card h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+.weeks-admin-hint { color: var(--text-soft); font-size: 0.85rem; margin-bottom: 0.75rem; }
+.weeks-admin-status { margin-top: 0.75rem; color: var(--text-soft); }
+.weeks-admin-error { margin-top: 0.75rem; color: #b91c1c; font-weight: 600; }
+.weeks-admin-success { margin-top: 0.75rem; color: #166534; font-weight: 600; }
+.weeks-admin-preview { margin-top: 1rem; }
+.weeks-admin-preview table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.weeks-admin-preview th, .weeks-admin-preview td { border: 1px solid var(--border); padding: 0.4rem 0.6rem; text-align: left; }
+.weeks-admin-row-warn td { background: #fef3c7; }
+.weeks-admin-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+.weeks-admin-save { background: var(--primary); color: white; border: none; padding: 0.5rem 1rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; }
+.weeks-admin-cancel { background: var(--surface-soft); border: 1px solid var(--border); padding: 0.5rem 1rem; border-radius: 0.5rem; cursor: pointer; }
 </style>
