@@ -441,6 +441,15 @@ app.post("/api/weeks/save", async (req, res) => {
   }
 });
 
+// Отдаём собранный фронтенд (после npm run build в папке frontend
+// получается frontend/dist) — чтобы один сервер на Render отдавал и сайт,
+// и API, без отдельного хостинга и без проблем с CORS между доменами.
+const FRONTEND_DIST = path.join(__dirname, "..", "frontend", "dist");
+app.use(express.static(FRONTEND_DIST));
+app.get(/^(?!\/api\/).*/, (req, res) => {
+  res.sendFile(path.join(FRONTEND_DIST, "index.html"));
+});
+
 // Глобальный обработчик ошибок
 app.use((err, req, res, next) => {
   console.error("Unhandled Error:", err);
