@@ -370,7 +370,6 @@
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, set, remove, onValue } from "firebase/database";
 
-// Данные вашего проекта из Firebase-консоли (Project settings → General → Your apps)
 const firebaseConfig = {
   apiKey: "AIzaSyB8ISLVy_HDp2NbRQKBQ35sStKlQP7GT_M",
   authDomain: "schedule-6d23f.firebaseapp.com",
@@ -454,10 +453,8 @@ export default {
       const data = this.currentTab === "semester" ? this.schedule.semester : this.schedule.session;
       if (!data || !data.length) return [];
 
-      // копии строк (не оригиналы) — иначе ввод текста ломает автосохранение
       let filtered = data.map((row) => ({ ...row }));
 
-      // числитель/знаменатель (только семестр)
       if (this.currentTab === "semester") {
         const processed = [];
         const TECHNICAL_COLUMNS = ["часы", "время", "дни нед.", "дни", "даты", "информация", "information"];
@@ -495,7 +492,6 @@ export default {
         filtered = processed;
       }
 
-      // убираем пустые строки (без времени/дня или без дежурного)
       filtered = filtered.filter((row) => {
         const hasTime = (row["Часы"] && String(row["Часы"]).trim() !== "") || 
                         (row["время"] && String(row["время"]).trim() !== "") ||
@@ -511,7 +507,6 @@ export default {
         return (hasTime || hasDay) && hasAnySurname;
       });
 
-      // фильтр по фамилии — только колонки с именами, чужие фамилии затираем
       if (this.selectedSurname) {
         const target = this.selectedSurname.trim().toLowerCase();
         const isMatch = (val) => val && String(val).trim().toLowerCase().includes(target);
@@ -580,14 +575,12 @@ export default {
       return Array.from(map, ([dayLabel, rows]) => ({ dayLabel, rows }));
     },
 
-    // реальный диапазон дат сессии (первый и последний расписанный день)
     sessionRangeDisplay() {
       const dates = [];
       (this.schedule.session || []).forEach((row) => {
         const d = this.parseExcelDate(row["даты"]);
         if (!d) return;
 
-        // учитываем только дни, где есть хотя бы один дежурный
         const locKeys = this.getRowLocations(row);
         const hasData = locKeys.some(
           (key) => row[key] && String(row[key]).trim() !== "" && String(row[key]).trim() !== "—"
@@ -608,7 +601,6 @@ export default {
       return `${format(start)} — ${format(end)}`;
     },
 
-    // реальные месяцы, встречающиеся в данных сессии
     sessionMonths() {
       if (this.currentTab !== "session") return [];
       const map = new Map();
@@ -616,7 +608,6 @@ export default {
         const d = this.parseExcelDate(row["даты"]);
         if (!d) return;
 
-        // пропускаем пустые дни (без единого дежурного)
         const locKeys = this.getRowLocations(row);
         const hasData = locKeys.some(
           (key) => row[key] && String(row[key]).trim() !== "" && String(row[key]).trim() !== "—"
@@ -636,7 +627,6 @@ export default {
       return [...map.values()].sort((a, b) => a.year - b.year || a.month - b.month);
     },
 
-    // группировка дней статистики по месяцам (для заголовка таблицы)
     statsMonthHeaderGroups() {
       const groups = [];
       this.groupedData.forEach((g) => {
@@ -658,7 +648,6 @@ export default {
     },
 
     availableSurnames() {
-      // только из "именных" колонок (getRowLocations)
       const data = this.currentTab === "semester" ? this.schedule.semester : this.schedule.session;
       const names = new Set();
       data.forEach((row) => {
@@ -689,7 +678,6 @@ export default {
       const addHours = (person, dayLabel, hours, mode = 'week') => {
         if (!person || hours <= 0) return;
 
-        // без учёта регистра, чтобы не было дублей
         let pKey = Object.keys(result).find(k => k.toLowerCase() === person.toLowerCase());
         if (!pKey) {
           pKey = person;
@@ -705,7 +693,6 @@ export default {
         if (mode === 'month' || mode === 'both') result[pKey].monthTotal += hours;
       };
 
-      // часы по конкретному месяцу (для сессии)
       const addHoursToMonth = (person, monthKey, hours) => {
         if (!person || hours <= 0 || !monthKey) return;
         let pKey = Object.keys(result).find(k => k.toLowerCase() === person.toLowerCase());
@@ -763,7 +750,7 @@ export default {
         const dayNames = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
 
         for (let date = new Date(firstDay); date <= lastDay; date.setDate(date.getDate() + 1)) {
-          if (date.getDay() === 0) continue; // без воскресений
+          if (date.getDay() === 0) continue;
 
           const currentWeekType = this.getWeekTypeByDate(date);
           const dayName = dayNames[date.getDay()];
@@ -802,7 +789,6 @@ export default {
               if (person) addHours(person, null, pairHours, 'month');
             });
 
-            // ключ как при сохранении заметки
             const timeLabel = row['Часы'] || row['время'] || row['ВРЕМЯ'] || '';
             const capDayName = dayName.charAt(0).toUpperCase() + dayName.slice(1);
             const dateStr = date.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -818,7 +804,6 @@ export default {
         }
       } 
       else if (this.currentTab === "session" && this.schedule.session && this.schedule.session.length) {
-        // по каждому реальному месяцу сессии, а не только по текущему
         this.schedule.session.forEach(row => {
           if (row && row["даты"]) {
             const dateObj = this.parseExcelDate(row["даты"]);
@@ -844,7 +829,6 @@ export default {
         });
       }
 
-      // округление
       Object.values(result).forEach((stats) => {
         stats.weekTotal = Number(stats.weekTotal.toFixed(1));
         stats.monthTotal = Number(stats.monthTotal.toFixed(1));
@@ -856,7 +840,6 @@ export default {
         });
       });
 
-      // сортировка по алфавиту
       const sortedResult = {};
       Object.keys(result)
         .sort((a, b) => a.localeCompare(b, "ru"))
@@ -864,7 +847,6 @@ export default {
           sortedResult[key] = result[key];
         });
 
-      // если выбрана фамилия — оставляем в статистике только её
       if (this.selectedSurname) {
         const target = this.selectedSurname.trim().toLowerCase();
         const onlySelected = {};
@@ -896,8 +878,6 @@ export default {
         }
       },
 
-      // грузим файл "Счёт недель"; если его ещё нет на сервере — не страшно,
-      // просто продолжаем работать по запасному расчёту в getWeekTypeByDate
       async loadWeeks() {
         try {
           const response = await fetch("/api/weeks");
@@ -911,7 +891,6 @@ export default {
             }))
             .filter((w) => w.start && w.end && w.type);
         } catch (err) {
-          // сервер недоступен или файла нет — не критично
         }
       },
 
@@ -995,13 +974,11 @@ export default {
       const current = new Date(date);
       current.setHours(0, 0, 0, 0);
 
-      // сначала ищем в загруженном файле "Счёт недель"
       if (this.weeksTable && this.weeksTable.length) {
         const found = this.weeksTable.find((w) => current >= w.start && current <= w.end);
         if (found) return found.type;
       }
 
-      // запасной расчёт — если для этой даты в файле недели не нашлось
       const day = current.getDay();
       const diff = current.getDate() - day + (day === 0 ? -6 : 1);
       const monday = new Date(current);
@@ -1044,7 +1021,6 @@ export default {
     },
 
     preprocessData(data) {
-      // сотрудники, полностью скрытые из графика и статистики
       const EXCLUDED_NAMES = ["белая"];
 
       const stripExcludedNames = (row) => {
@@ -1156,7 +1132,6 @@ export default {
       return dayLabel.includes(todayStr);
     },
 
-    // автосохранение с задержкой (без ухода из поля)
     saveInformationDebounced(row) {
       const key = this.getRowSaveKey(row);
       clearTimeout(this.saveTimers[key]);
@@ -1171,7 +1146,6 @@ export default {
       return `${this.currentTab}_${dayLabel}_${timeLabel}`.trim().toLowerCase();
     },
 
-    // Firebase не разрешает точки, #, $, [, ], / в ключах — заменяем на дефис
     sanitizeKey(key) {
       return String(key).replace(/[.#$[\]/]/g, "-");
     },
@@ -1194,7 +1168,6 @@ export default {
       return Number(hours.toFixed(1)).toString().replace(".", ",");
     },
 
-    // Поиск ключей
     getInfoKey(row) {
       if (!row) return "Информация";
       return Object.keys(row).find(k => {
@@ -1214,7 +1187,6 @@ export default {
     this.loadSchedule();
     this.loadWeeks();
 
-    // подписка на заметки в реальном времени — обновляется у всех устройств сразу
     onValue(notesRef, (snapshot) => {
       this.notes = snapshot.val() || {};
     });

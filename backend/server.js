@@ -6,17 +6,15 @@ const cors = require("cors");
 const multer = require("multer");
 const pdfParse = require("pdf-parse");
 
-// ==========================================
 // КОНФИГУРАЦИЯ И КОНСТАНТЫ
-// ==========================================
 const CONFIG = {
   PORT: process.env.PORT || 3000,
   FILE_PATH: path.join(__dirname, "График_дежурств.xlsx"),
   WEEKS_FILE_PATH: path.join(__dirname, "weeks.json"),
-  WEEKS_TO_GENERATE: 30, // с запасом на весь учебный период (семестр + сессия)
+  WEEKS_TO_GENERATE: 30,
   SHEETS: {
-    SEMESTER: "семестр", // Оставляем точное совпадение для семестра
-    SESSION_PREFIX: "сессия", // Ищем страницу, которая начинается с этого слова
+    SEMESTER: "семестр",
+    SESSION_PREFIX: "сессия",
   },
 };
 
@@ -26,27 +24,17 @@ const COLS = {
   DUTY: ["Джамбула", "Вознесенский", "Воснесенский", "Джамбула доп."],
 };
 
-// ==========================================
-// УТИЛИТЫ (DRY)
-// ==========================================
-/**
- * Извлекает значение из строки по массиву возможных ключей
- */
+// УТИЛИТЫ
 const extractValue = (row, possibleKeys) => {
   const key = possibleKeys.find((k) => row[k] !== undefined);
   return key ? String(row[key]).trim() : "";
 };
 
-/**
- * Проверяет, есть ли дежурные в строке
- */
 const hasDutyAssigned = (row) => {
   return COLS.DUTY.some((key) => String(row[key] || "").trim() !== "");
 };
 
-// ==========================================
-// БИЗНЕС-ЛОГИКА (Single Responsibility)
-// ==========================================
+// БИЗНЕС-ЛОГИКА
 class ScheduleParser {
   static parseSemester(sheet) {
     if (!sheet) return [];
@@ -60,7 +48,6 @@ class ScheduleParser {
       const time = extractValue(row, COLS.TIME);
       const hasDuty = hasDutyAssigned(row);
 
-      // Игнорируем пустые строки без расписания
       if (!time && !hasDuty) continue;
 
       if (day) {
@@ -75,13 +62,11 @@ class ScheduleParser {
       const currentDayBlocks = dayGroups.get(currentDay);
 
       if (time) {
-        // Новый блок времени
         const existingBlock = currentDayBlocks.find((b) => b.time === time);
 
         if (!existingBlock) {
           currentDayBlocks.push({ time, num: { ...row }, den: null });
         } else if (hasDuty) {
-          // Распределение по числителю/знаменателю
           if (!existingBlock.num) {
             existingBlock.num = { ...row };
           } else if (!existingBlock.den) {
@@ -89,7 +74,6 @@ class ScheduleParser {
           }
         }
       } else if (currentDayBlocks.length > 0) {
-        // Строка без времени -> Знаменатель для последнего блока
         const lastBlock = currentDayBlocks[currentDayBlocks.length - 1];
         if (!lastBlock.den) {
           const dayKey = COLS.DAY.find((k) => row[k] !== undefined) || "Дни нед.";
@@ -111,7 +95,6 @@ class ScheduleParser {
         if (block.den) {
           semesterData.push(block.den);
         } else {
-          // Генерация пустой заглушки для знаменателя
           const baseRow = block.num || {};
           const dayKey = COLS.DAY.find((k) => baseRow[k] !== undefined) || "Дни нед.";
           semesterData.push({
@@ -156,9 +139,7 @@ class ScheduleParser {
   }
 }
 
-// ==========================================
-// СЕРВИС ДАННЫХ (Кэширование и I/O)
-// ==========================================
+// СЕРВИС ДАННЫХ
 class ScheduleService {
   constructor(filePath) {
     this.filePath = filePath;
@@ -170,7 +151,6 @@ class ScheduleService {
     try {
       const stats = await fs.stat(this.filePath);
 
-      // Возвращаем кэш, если файл не изменялся
       if (this.cache && stats.mtimeMs === this.lastModifiedTime) {
         return this.cache;
       }
@@ -179,16 +159,12 @@ class ScheduleService {
       const fileBuffer = await fs.readFile(this.filePath);
       const workbook = xlsx.read(fileBuffer, { type: "buffer" });
 
-      // 1. Поиск страницы семестра
       const semesterSheet = workbook.Sheets[CONFIG.SHEETS.SEMESTER];
 
-      // 2. ДИНАМИЧЕСКИЙ ПОИСК СТРАНИЦЫ СЕССИИ
-      // Ищем имя страницы, которое (приведенное к нижнему регистру) начинается со слова "сессия"
       const dynamicSessionSheetName = workbook.SheetNames.find((name) =>
         name.toLowerCase().startsWith(CONFIG.SHEETS.SESSION_PREFIX)
       );
 
-      // Получаем саму страницу, если она найдена
       const sessionSheet = dynamicSessionSheetName
         ? workbook.Sheets[dynamicSessionSheetName]
         : null;
@@ -220,13 +196,7 @@ class ScheduleService {
   }
 }
 
-// ==========================================
 // РАЗБОР "СЧЁТА НЕДЕЛЬ" ИЗ ТЕКСТА PDF
-// ==========================================
-// Не пытаемся распознавать всю таблицу — в файле уже прямым текстом написано,
-// когда начинается первая неделя и какой она числитель/знаменатель, например:
-// "с 01.09 по 06.09 - первая неделя (нечетная), занятия по 'числителю'".
-// Берём эту точку отсчёта и дальше просто чередуем по 7 дней.
 function formatDate(d) {
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -279,9 +249,6 @@ function parseWeeksFromText(text, weeksCount) {
   return weeks;
 }
 
-// Строгая проверка загружаемого через сайт xlsx: в отличие от обычной
-// загрузки (которая просто предупреждает в консоли, если что-то не так),
-// здесь любая проблема — повод ОТКАЗАТЬ и не трогать рабочий файл на сервере.
 function validateAndParseScheduleBuffer(buffer) {
   let workbook;
   try {
@@ -315,14 +282,12 @@ function validateAndParseScheduleBuffer(buffer) {
   return { semester, session, sessionSheetName };
 }
 
-// ==========================================
 // ИНИЦИАЛИЗАЦИЯ EXPRESS
-// ==========================================
 const app = express();
 const scheduleService = new ScheduleService(CONFIG.FILE_PATH);
 const pdfUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 МБ достаточно для такого файла
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype !== "application/pdf") {
       return cb(new Error("Ожидается PDF-файл"));
@@ -344,7 +309,6 @@ const xlsxUpload = multer({
 app.use(cors());
 app.use(express.json());
 
-// Маршрут получения расписания
 app.get("/api/schedule", async (req, res, next) => {
   try {
     const data = await scheduleService.getSchedule();
@@ -358,10 +322,6 @@ app.get("/api/schedule", async (req, res, next) => {
   }
 });
 
-// Загрузка нового Графика_дежурств.xlsx через сайт. Сначала проверяем файл
-// в памяти (есть ли нужные листы, есть ли в них строки) — и только если всё
-// сошлось, заменяем рабочий файл на диске. Если что-то не так — ничего не
-// трогаем на сервере, просто возвращаем понятную ошибку.
 app.post("/api/schedule/upload", xlsxUpload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "Файл не передан" });
@@ -385,10 +345,6 @@ app.post("/api/schedule/upload", xlsxUpload.single("file"), async (req, res) => 
   }
 });
 
-// Маршрут получения "Счёта недель" (числитель/знаменатель по датам).
-// Файл weeks.json кладётся в ту же папку на сервере, что и xlsx с расписанием.
-// Если файла ещё нет — отдаём пустой массив, а не ошибку: фронтенд в этом
-// случае просто использует свой запасной расчёт (не критично для работы сайта).
 app.get("/api/weeks", async (req, res) => {
   try {
     const content = await fs.readFile(CONFIG.WEEKS_FILE_PATH, "utf-8");
@@ -402,11 +358,6 @@ app.get("/api/weeks", async (req, res) => {
   }
 });
 
-// Загрузка PDF "Счёт недель" -> распознавание (по дате начала первой недели
-// и её типу, которые прямо написаны в файле текстом; дальше — чередование
-// каждые 7 дней). ВАЖНО: только возвращает результат для проверки на экране —
-// ничего не сохраняет. Сохранение — отдельный маршрут ниже, уже после того
-// как человек визуально сверил результат с оригиналом файла.
 app.post("/api/weeks/parse", pdfUpload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "Файл не передан" });
@@ -424,9 +375,6 @@ app.post("/api/weeks/parse", pdfUpload.single("file"), async (req, res) => {
   }
 });
 
-// Сохранение подтверждённого человеком списка недель в weeks.json.
-// Тело запроса — тот же массив, что вернул /api/weeks/parse (можно
-// отредактированный вручную на экране перед сохранением).
 app.post("/api/weeks/save", async (req, res) => {
   const weeks = req.body;
   if (!Array.isArray(weeks) || !weeks.length) {
@@ -441,16 +389,12 @@ app.post("/api/weeks/save", async (req, res) => {
   }
 });
 
-// Отдаём собранный фронтенд (после npm run build в папке frontend
-// получается frontend/dist) — чтобы один сервер на Render отдавал и сайт,
-// и API, без отдельного хостинга и без проблем с CORS между доменами.
 const FRONTEND_DIST = path.join(__dirname, "..", "frontend", "dist");
 app.use(express.static(FRONTEND_DIST));
 app.get(/^(?!\/api\/).*/, (req, res) => {
   res.sendFile(path.join(FRONTEND_DIST, "index.html"));
 });
 
-// Глобальный обработчик ошибок
 app.use((err, req, res, next) => {
   console.error("Unhandled Error:", err);
   res.status(500).json({ error: "Критическая ошибка сервера" });
